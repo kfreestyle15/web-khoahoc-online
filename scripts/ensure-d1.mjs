@@ -4,6 +4,7 @@
 // Chạy lại nhiều lần vẫn an toàn.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const DB_NAME = "capybara-scores";
 const CONFIG = "wrangler.jsonc";
@@ -27,7 +28,7 @@ export function injectId(configText, id) {
   return configText.replace(marker, `${marker}\n      "database_id": "${id}",`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   let id = findId();
   if (!id) {
     console.log(`Chưa có database ${DB_NAME}, đang tạo mới...`);
