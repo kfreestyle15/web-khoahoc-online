@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Capybara Mắt Lé</title>
+<style>
+  /* Nền tối, đặt tấm vẽ (canvas) vào giữa màn hình */
+  body {
+    margin: 0;
+    background: #1d1b26;
+    color: #eee;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  canvas {
+    /* Canvas thật chỉ 320x176 điểm, CSS phóng to 3 lần cho dễ nhìn */
+    width: 960px;
+    max-width: calc(100vw - 32px);
+    height: auto;
+    aspect-ratio: 320 / 176;
+    image-rendering: pixelated; /* giữ pixel vuông vức, không bị mờ */
+    border: 4px solid #3a3550;
+  }
+  p { opacity: 0.7; }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="320" height="176"></canvas>
+<p>← → để chạy · Space để nhảy (giữ lâu nhảy cao hơn) · Enter để chơi lại</p>
+
+<script>
+/*
+  =====================================================================
+   CAPYBARA MẮT LÉ — game platformer nhỏ để học lập trình
+  =====================================================================
+   Cách đọc file này: đọc từ trên xuống dưới.
+   Mỗi phần có ghi [BƯỚC 1] ... [BƯỚC 5] để biết nó thuộc giai đoạn nào
+   trong kế hoạch.
+
+   THỬ SỬA NHỮNG CON SỐ NÀY (ở phần THÔNG SỐ ngay bên dưới):
+     - TOC_DO_CHAY : capybara chạy nhanh hay chậm
+     - LUC_NHAY    : nhảy cao hay thấp
+     - TRONG_LUC   : nhỏ thì bay bổng như trên mặt trăng, lớn thì rơi nhanh
+     - BANG_MAU    : đổi màu lông capybara (chữ "n")
+   Sửa xong bấm Cmd+S để lưu, rồi tải lại trang (Cmd+R) để xem kết quả.
+*/
+
+
+// =====================================================================
+// [BƯỚC 1] THÔNG SỐ — các con số điều khiển cả game
+// =====================================================================
+// "const" tạo ra một cái hộp có tên để giữ một giá trị không đổi.
+
+const O = 16;                    // kích thước một ô của màn chơi (16x16 điểm)
+const TOC_DO_CHAY = 1.6;         // [BƯỚC 2] số điểm capybara đi được mỗi bước
+const TRONG_LUC = 0.25;          // [BƯỚC 3] mỗi bước, tốc độ rơi tăng thêm chừng này
+const LUC_NHAY = 5.2;            // [BƯỚC 3] tốc độ bật lên lúc vừa nhảy
+const TOC_DO_ROI_TOI_DA = 6;     // [BƯỚC 3] rơi nhanh nhất (phải nhỏ hơn O để không rơi xuyên đất)
+const TOC_DO_QUAI = 0.5;         // [BƯỚC 5] tốc độ đi của quái slime
+
+// Bảng màu: mỗi chữ cái trong hình vẽ pixel ứng với một màu.
+// Dấu chấm "." nghĩa là trong suốt (không tô gì).
+const BANG_MAU = {
+  n: "#a8693a",   // lông capybara
+  N: "#6b3e1f",   // lông đậm (tai, chân, viền)
+  s: "#cf9a68",   // mõm và bụng sáng màu
+  D: "#3a2412",   // mũi
+  P: "#f09aae",   // má hồng
+  W: "#ffffff",   // tròng trắng mắt
+  K: "#151515",   // con ngươi / màu đen
+  G: "#62c43c",   // cỏ sáng
+  g: "#3f8d28",   // cỏ đậm
+  E: "#9c6234",   // đất
+  e: "#7a4823",   // đất đậm
+  Y: "#ffd23f",   // vàng (xu, khối)
+  y: "#c98c00",   // vàng đậm
+  B: "#8a5a2b",   // khối đã húc
+  b: "#5e3b1a",   // viền khối đã húc
+  L: "#2f8f3a",   // viền slime
+  l: "#6fdc5a",   // thân slime
+  M: "#1f5c25",   // miệng slime
+  C: "#ffffff",   // mây
+  c: "#dbe9f7",   // bóng mây
+  R: "#e8504a",   // lá cờ
+};
+
+
+// =====================================================================
+// [BƯỚC 1] HÌNH PIXEL — vẽ bằng chữ cái
+// =====================================================================
+// Mỗi hình là một MẢNG (danh sách) các dòng chữ.
+// Mỗi chữ cái là một điểm ảnh, màu lấy từ BANG_MAU ở trên.
+// Capybara quay mặt sang phải. Mắt lé: con ngươi bên trái nằm phía phải,
+// con ngươi bên phải nằm phía trái, nên hai mắt "nhìn vào nhau".
+
+const CAPY_DUNG = [
+  "..........N..N..",
+  "....nnnnnnnnnnn.",
+  "..nnnnnnnnnnnnnn",
+  ".nnnnnnnnWWnWWnn",
+  ".nnnnnnnnWKnKWnn",   // <- mắt lé ở đây: "WK" và "KW"
+  "nnnnnnnnnnPnnssD",
+  "nnnnnnnnnnnnssss",
+  "nnnnnnnnnnnnsss.",
+  ".nnnnnnnnnnnn...",
+  "..ssssssssss....",
+  "..NN.NN..NN.NN..",
+  "..NN.NN..NN.NN..",
+];
+
+// Khung chạy thứ hai: chân đổi tư thế để trông như đang bước
+const CAPY_CHAY = [
+  "..........N..N..",
+  "....nnnnnnnnnnn.",
+  "..nnnnnnnnnnnnnn",
+  ".nnnnnnnnWWnWWnn",
+  ".nnnnnnnnWKnKWnn",
+  "nnnnnnnnnnPnnssD",
+  "nnnnnnnnnnnnssss",
+  "nnnnnnnnnnnnsss.",
+  ".nnnnnnnnnnnn...",
+  "..ssssssssss....",
+  ".NN...NNNN...NN.",
+  "NN.....NN.....NN",
+];
+
+// Lúc nhảy: chân duỗi ra
+const CAPY_NHAY = [
+  "..........N..N..",
+  "....nnnnnnnnnnn.",
+  "..nnnnnnnnnnnnnn",
+  ".nnnnnnnnWWnWWnn",
+  ".nnnnnnnnWKnKWnn",
+  "nnnnnnnnnnPnnssD",
+  "nnnnnnnnnnnnssss",
+  "nnnnnnnnnnnnsss.",
+  ".nnnnnnnnnnnn...",
+  "NNssssssssssNN..",
+  "N............N..",
+  "................",
+];
+
+// Lúc thua: mắt nhắm tịt
+const CAPY_THUA = [
+  "..........N..N..",
+  "....nnnnnnnnnnn.",
+  "..nnnnnnnnnnnnnn",
+  ".nnnnnnnnnnnnnnn",
+  ".nnnnnnnnKKnKKnn",
+  "nnnnnnnnnnPnnssD",
+  "nnnnnnnnnnnnssss",
+  "nnnnnnnnnnnnsss.",
+  ".nnnnnnnnnnnn...",
+  "..ssssssssss....",
+  "..NN.NN..NN.NN..",
+  "..NN.NN..NN.NN..",
+];
+
+// [BƯỚC 3] Ô đất có cỏ ở trên (dùng khi phía trên ô này là khoảng trống)
+const O_DAT_CO = [
+  "GGGGGGGGGGGGGGGG",
+  "GGgGGGGGGgGGGGGG",
+  "gEgggEggEEgggEgg",
+  "EEEEEEEeEEEEEEEE",
+  "EEeEEEEEEEEEeEEE",
+  "EEEEEEEEEeEEEEEE",
+  "EEEEeEEEEEEEEEEE",
+  "EEEEEEEEEEEEEEeE",
+  "EeEEEEEEeEEEEEEE",
+  "EEEEEEEEEEEEEEEE",
+  "EEEEEEeEEEEEeEEE",
+  "EEEEEEEEEEEEEEEE",
+  "EEEeEEEEEEEEEEEE",
+  "EEEEEEEEEEeEEEEE",
+  "EeEEEEEEEEEEEEEE",
+  "EEEEEEEEeEEEEEEe",
+];
+
+// [BƯỚC 3] Ô đất không có cỏ (dùng khi phía trên cũng là đất)
+const O_DAT = [
+  "EEEEEEEeEEEEEEEE",
+  "EEeEEEEEEEEEeEEE",
+  "EEEEEEEEEeEEEEEE",
+  "EEEEeEEEEEEEEEEE",
+  "EEEEEEEEEEEEEEeE",
+  "EeEEEEEEeEEEEEEE",
+  "EEEEEEEEEEEEEEEE",
+  "EEEEEEeEEEEEeEEE",
+  "EEEEEEEEEEEEEEEE",
+  "EEEeEEEEEEEEEEEE",
+  "EEEEEEEEEEeEEEEE",
+  "EeEEEEEEEEEEEEEE",
+  "EEEEEEEEeEEEEEEe",
+  "EEEEeEEEEEEEEEEE",
+  "EEEEEEEEEEEEeEEE",
+  "EEEEEEEEEEEEEEEE",
+];
+
+// [BƯỚC 4] Khối có xu: húc đầu vào từ bên dưới thì nhả ra một đồng xu
+const O_KHOI_XU = [
+  "yyyyyyyyyyyyyyyy",
+  "yYYYYYYYYYYYYYYy",
+  "yYyYYYYYYYYYYyYy",
+  "yYYYYYYYYYYYYYYy",
+  "yYYYYYYyyYYYYYYy",
+  "yYYYYYyKKyYYYYYy",
+  "yYYYYyKYYKyYYYYy",
+  "yYYYyKYYYYKyYYYy",
+  "yYYYyKYYYYKyYYYy",
+  "yYYYYyKYYKyYYYYy",
+  "yYYYYYyKKyYYYYYy",
+  "yYYYYYYyyYYYYYYy",
+  "yYYYYYYYYYYYYYYy",
+  "yYyYYYYYYYYYYyYy",
+  "yYYYYYYYYYYYYYYy",
+  "yyyyyyyyyyyyyyyy",
+];
+
+// [BƯỚC 4] Khối đã húc rồi: hết xu, đổi sang màu nâu
+const O_KHOI_RONG = [
+  "bbbbbbbbbbbbbbbb",
+  "bBBBBBBBBBBBBBBb",
+  "bBbBBBBBBBBBBbBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBBBBBBBBBBBBBBb",
+  "bBbBBBBBBBBBBbBb",
+  "bBBBBBBBBBBBBBBb",
+  "bbbbbbbbbbbbbbbb",
+];
+
+// [BƯỚC 4] Đồng xu
+const HINH_XU = [
+  "..yyyy..",
+  ".yYYYYy.",
+  "yYWYYYYy",
+  "yYWYyYYy",
+  "yYYYyYYy",
+  "yYYYyYYy",
+  ".yYYYYy.",
+  "..yyyy..",
+];
+
+// [BƯỚC 4] Lá cờ đích có mặt capybara nhỏ
+const HINH_CO = [
+  "RRRRRRRRRRRR",
+  "RRRRnnnnRRRR",
+  "RRRnnnnnnRRR",
+  "RRRnKnnKnRRR",
+  "RRRnnnsssRRR",
+  "RRRRnnnnRRRR",
+  "RRRRRRRRRRRR",
+];
+
+// [BƯỚC 4] Đám mây trang trí
+const HINH_MAY = [
+  "........CCCC............",
+  "......CCCCCCCC...CCC....",
+  "...CCCCCCCCCCCCCCCCCCC..",
+  ".CCCCCCCCCCCCCCCCCCCCCCC",
+  "CCCCCCCCCCCCCCCCCCCCCCCC",
+  ".ccccccccccccccccccccccc",
+];
+
+// [BƯỚC 5] Quái slime: hai khung để trông như đang nhún
+const SLIME_1 = [
+  ".....LLLL.....",
+  "...LLllllLL...",
+  "..LllllllllL..",
+  ".LllWWllWWllL.",
+  ".LllWKllKWllL.",
+  "LllllllllllllL",
+  "LllllMMMMllllL",
+  "LllllllllllllL",
+  ".LLLLLLLLLLLL.",
+  "..............",
+];
+const SLIME_2 = [
+  "..............",
+  ".....LLLL.....",
+  "...LLllllLL...",
+  ".LLllllllllLL.",
+  "LlllWWllWWlllL",
+  "LlllWKllKWlllL",
+  "LllllllllllllL",
+  "LllllMMMMllllL",
+  "LllllllllllllL",
+  ".LLLLLLLLLLLL.",
+];
+// Slime bị đạp bẹp
+const SLIME_BEP = [
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  ".LLLLLLLLLLLL.",
+  "LllKKllllKKllL",
+  "LLLLLLLLLLLLLL",
+];
+
+
+// =====================================================================
+// [BƯỚC 1] CHUẨN BỊ TẤM VẼ VÀ HÀM VẼ PIXEL
+// =====================================================================
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");   // "ctx" là cây cọ để vẽ lên canvas
+ctx.imageSmoothingEnabled = false;     // không làm mờ khi phóng to
+const RONG = canvas.width;             // 320
+const CAO = canvas.height;             // 176
+
+// Biến mỗi hình chữ cái thành một "con dấu" (một canvas nhỏ) một lần duy nhất.
+// Sau đó muốn vẽ ở đâu chỉ việc "đóng dấu", nhanh hơn tô từng điểm mỗi lần.
+function taoConDau(luoi) {
+  const conDau = document.createElement("canvas");
+  conDau.width = luoi[0].length;
+  conDau.height = luoi.length;
+  const c = conDau.getContext("2d");
+  // Vòng lặp "for": đi qua từng dòng, rồi từng chữ trong dòng
+  for (let hang = 0; hang < luoi.length; hang++) {
+    for (let cot = 0; cot < luoi[hang].length; cot++) {
+      const chu = luoi[hang][cot];
+      if (chu !== ".") {               // "." là trong suốt, bỏ qua
+        c.fillStyle = BANG_MAU[chu];
+        c.fillRect(cot, hang, 1, 1);   // tô một điểm 1x1
+      }
+    }
+  }
+  return conDau;
+}
+
+// Vẽ một con dấu tại vị trí (x, y). Nếu lat = true thì lật ngang (quay mặt trái).
+function vePixel(conDau, x, y, lat) {
+  x = Math.round(x);
+  y = Math.round(y);
+  if (lat) {
+    ctx.save();
+    ctx.scale(-1, 1);                  // lật gương theo chiều ngang
+    ctx.drawImage(conDau, -x - conDau.width, y);
+    ctx.restore();
+  } else {
+    ctx.drawImage(conDau, x, y);
+  }
+}
+
+// Tạo sẵn tất cả con dấu
+const DAU = {
+  capyDung: taoConDau(CAPY_DUNG),
+  capyChay: taoConDau(CAPY_CHAY),
+  capyNhay: taoConDau(CAPY_NHAY),
+  capyThua: taoConDau(CAPY_THUA),
+  datCo: taoConDau(O_DAT_CO),
+  dat: taoConDau(O_DAT),
+  khoiXu: taoConDau(O_KHOI_XU),
+  khoiRong: taoConDau(O_KHOI_RONG),
+  xu: taoConDau(HINH_XU),
+  co: taoConDau(HINH_CO),
+  may: taoConDau(HINH_MAY),
+  slime1: taoConDau(SLIME_1),
+  slime2: taoConDau(SLIME_2),
+  slimeBep: taoConDau(SLIME_BEP),
+};
+
+
+// =====================================================================
+// [BƯỚC 4] MÀN CHƠI — vẽ bằng ký tự
+// =====================================================================
+//   #  đất / bục          B  khối có xu      o  đồng xu
+//   E  quái slime         F  đỉnh cột cờ     P  chỗ capybara xuất phát
+//   .  khoảng trống
+// Thử tự vẽ thêm bục: đổi vài dấu "." thành "#" rồi lưu và tải lại trang!
+const BAN_DO = [
+  "................................................................................................................",
+  "..........................................................................................................F.....",
+  "...........................oooo.......................................................ooo.......................",
+  "...........................####.......................................................###.......................",
+  "......................................ooo.......................................................................",
+  "..........#B#B#.......oooo........................B.......E...B.B....o.............................##...........",
+  "......................####..........##...##.............#####......o...o..........###.............###...........",
+  "...................................###...###.....................................................####...........",
+  "..P...ooo.........E.........E.....####...####...E........ooo................E...................#####...........",
+  "######################################...###########################...###################..####################",
+  "######################################...###########################...###################..####################",
+];
+const SO_HANG = BAN_DO.length;
+const SO_COT = BAN_DO[0].length;
+
+// "oMan" là bản đồ có thể thay đổi trong lúc chơi (khối B bị húc sẽ thành b).
+// Mỗi dòng được tách thành mảng từng ký tự để sửa được.
+let oMan = [];
+
+// Ô ở (cot, hang) có phải là ô cứng không đi xuyên được không?
+function laO(cot, hang) {
+  if (cot < 0 || cot >= SO_COT) return true;   // hai mép trái/phải là tường
+  if (hang < 0 || hang >= SO_HANG) return false; // trên trời và dưới hố là trống
+  const kyTu = oMan[hang][cot];
+  return kyTu === "#" || kyTu === "B" || kyTu === "b";
+}
+
+
+// =====================================================================
+// [BƯỚC 2] BÀN PHÍM
+// =====================================================================
+// "phim" là một object ghi lại phím nào đang được giữ.
+// Ví dụ: phim["ArrowRight"] = true khi đang giữ mũi tên phải.
+const phim = {};
+let demNhay = 0;   // [BƯỚC 3] nhớ cú bấm nhảy trong vài bước, để bấm hơi sớm vẫn nhảy được
+
+window.addEventListener("keydown", function (suKien) {
+  phim[suKien.code] = true;
+  if (suKien.code === "Space" && !suKien.repeat) demNhay = 6;
+  if (suKien.code === "Enter" && trangThai !== "choi") napMan();   // [BƯỚC 5] chơi lại
+  // Không cho mũi tên và Space cuộn trang web
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(suKien.code)) {
+    suKien.preventDefault();
+  }
+});
+window.addEventListener("keyup", function (suKien) {
+  phim[suKien.code] = false;
+});
+
+
+// =====================================================================
+// TRẠNG THÁI GAME — những thứ thay đổi trong lúc chơi
+// =====================================================================
+let capy;          // nhân vật chính
+let quaiList;      // [BƯỚC 5] danh sách quái
+let xuList;        // [BƯỚC 4] danh sách xu còn lại
+let xuBay;         // [BƯỚC 4] các đồng xu đang bật lên từ khối
+let cotCo;         // [BƯỚC 4] cột chứa cờ đích
+let hangCo;
+let diem;          // [BƯỚC 4] điểm
+let cameraX;       // [BƯỚC 4] góc nhìn đang ở đâu trong màn chơi
+let trangThai;     // [BƯỚC 5] "choi", "thang" hoặc "thua"
+let demKhungHinh = 0;
+
+// [BƯỚC 4] Đọc bản đồ ký tự và tạo mọi thứ từ đầu (cũng dùng khi chơi lại)
+function napMan() {
+  oMan = BAN_DO.map(function (dong) { return dong.split(""); });
+  quaiList = [];
+  xuList = [];
+  xuBay = [];
+  diem = 0;
+  cameraX = 0;
+  trangThai = "choi";
+
+  for (let hang = 0; hang < SO_HANG; hang++) {
+    for (let cot = 0; cot < SO_COT; cot++) {
+      const kyTu = oMan[hang][cot];
+      const x = cot * O;
+      const y = hang * O;
+      if (kyTu === "P") {
+        // Hộp va chạm 12x11, nhỏ hơn hình 16x12 một chút cho công bằng
+        capy = { x: x + 2, y: y + 5, w: 12, h: 11, vx: 0, vy: 0, huong: 1, dangDungDat: false, buocChan: 0 };
+      } else if (kyTu === "o") {
+        xuList.push({ x: x + 4, y: y + 4, w: 8, h: 8 });
+      } else if (kyTu === "E") {
+        quaiList.push({ x: x + 1, y: y + 7, w: 14, h: 9, vx: 0, vy: 0, huong: -1, dangDungDat: false, bep: 0 });
+      } else if (kyTu === "F") {
+        cotCo = cot;
+        hangCo = hang;
+      }
+      // P, o, E, F chỉ là vị trí xuất phát, xóa đi để không bị coi là ô cứng
+      if ("PoEF".includes(kyTu)) oMan[hang][cot] = ".";
+    }
+  }
+}
+
+
+// =====================================================================
+// [BƯỚC 3] DI CHUYỂN VÀ VA CHẠM — dùng chung cho capybara và quái
+// =====================================================================
+// Mọi vật đều là một hình chữ nhật: (x, y) là góc trên trái, w rộng, h cao.
+//
+//   Va chạm = hai hình chữ nhật chồng lên nhau:
+//     +-------+
+//     | vật   |
+//     |   +---|----+
+//     +---|---+    |   <- phần chồng nhau: phải đẩy vật ra
+//         | ô đất  |
+//         +--------+
+//
+// Mẹo quan trọng: đi theo chiều NGANG trước rồi đẩy ra, sau đó mới đi
+// theo chiều DỌC rồi đẩy ra. Làm cùng lúc thì vật hay bị kẹt vào góc.
+function diChuyenVaVaCham(vat) {
+  vat.chamTuong = false;
+  vat.dauCham = [];          // các ô bị húc đầu vào (để biết khối xu nào bị húc)
+
+  // ---- Chiều ngang (X) ----
+  vat.x += vat.vx;
+  let hangTren = Math.floor(vat.y / O);
+  let hangDuoi = Math.floor((vat.y + vat.h - 0.01) / O);
+  if (vat.vx > 0) {
+    const cot = Math.floor((vat.x + vat.w - 0.01) / O);   // cột ở mép phải
+    for (let hang = hangTren; hang <= hangDuoi; hang++) {
+      if (laO(cot, hang)) { vat.x = cot * O - vat.w; vat.chamTuong = true; break; }
+    }
+  } else if (vat.vx < 0) {
+    const cot = Math.floor(vat.x / O);                     // cột ở mép trái
+    for (let hang = hangTren; hang <= hangDuoi; hang++) {
+      if (laO(cot, hang)) { vat.x = (cot + 1) * O; vat.chamTuong = true; break; }
+    }
+  }
+
+  // ---- Chiều dọc (Y) ----
+  vat.y += vat.vy;
+  vat.dangDungDat = false;
+  const cotTrai = Math.floor(vat.x / O);
+  const cotPhai = Math.floor((vat.x + vat.w - 0.01) / O);
+  if (vat.vy > 0) {
+    const hang = Math.floor((vat.y + vat.h - 0.01) / O);   // hàng dưới chân
+    for (let cot = cotTrai; cot <= cotPhai; cot++) {
+      if (laO(cot, hang)) {
+        vat.y = hang * O - vat.h;   // đặt chân ngay trên mặt ô
+        vat.vy = 0;
+        vat.dangDungDat = true;
+        break;
+      }
+    }
+  } else if (vat.vy < 0) {
+    const hang = Math.floor(vat.y / O);                    // hàng trên đầu
+    for (let cot = cotTrai; cot <= cotPhai; cot++) {
+      if (laO(cot, hang)) {
+        vat.dauCham.push({ cot: cot, hang: hang });
+      }
+    }
+    if (vat.dauCham.length > 0) {
+      vat.y = (hang + 1) * O;       // đụng trần: đẩy xuống ngay dưới ô
+      vat.vy = 0;
+    }
+  }
+}
+
+// Hai hình chữ nhật có chồng lên nhau không?
+function chongNhau(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+
+// =====================================================================
+// CẬP NHẬT — chạy 60 lần mỗi giây
+// =====================================================================
+function capNhat() {
+  demKhungHinh++;
+  if (trangThai !== "choi") return;   // [BƯỚC 5] thắng hoặc thua thì đứng yên
+
+  // ---- [BƯỚC 2] Chạy trái/phải ----
+  capy.vx = 0;
+  if (phim["ArrowLeft"])  { capy.vx = -TOC_DO_CHAY; capy.huong = -1; }
+  if (phim["ArrowRight"]) { capy.vx =  TOC_DO_CHAY; capy.huong =  1; }
+  if (capy.vx !== 0) capy.buocChan++;
+  else capy.buocChan = 0;
+
+  // ---- [BƯỚC 3] Nhảy và trọng lực ----
+  if (demNhay > 0) {
+    if (capy.dangDungDat) {
+      capy.vy = -LUC_NHAY;
+      demNhay = 0;
+    } else {
+      demNhay--;
+    }
+  }
+  // Thả Space sớm khi đang bay lên thì cú nhảy bị cắt ngắn
+  if (!phim["Space"] && capy.vy < -2) capy.vy = -2;
+
+  capy.vy = Math.min(capy.vy + TRONG_LUC, TOC_DO_ROI_TOI_DA);
+  diChuyenVaVaCham(capy);
+
+  // ---- [BƯỚC 4] Húc đầu vào khối có xu ----
+  for (const o of capy.dauCham) {
+    if (oMan[o.hang][o.cot] === "B") {
+      oMan[o.hang][o.cot] = "b";      // khối hết xu
+      diem++;
+      xuBay.push({ x: o.cot * O + 4, y: o.hang * O - 8, vy: -3, song: 24 });
+    }
+  }
+
+  // ---- [BƯỚC 4] Ăn xu ----
+  // Duyệt ngược từ cuối mảng để xóa phần tử không làm lệch vị trí
+  for (let i = xuList.length - 1; i >= 0; i--) {
+    if (chongNhau(capy, xuList[i])) {
+      xuList.splice(i, 1);            // xóa đồng xu khỏi danh sách
+      diem++;
+    }
+  }
+
+  // Xu bật lên từ khối: bay lên, rơi xuống, rồi biến mất
+  for (let i = xuBay.length - 1; i >= 0; i--) {
+    const xu = xuBay[i];
+    xu.y += xu.vy;
+    xu.vy += TRONG_LUC;
+    xu.song--;
+    if (xu.song <= 0) xuBay.splice(i, 1);
+  }
+
+  // ---- [BƯỚC 5] Quái ----
+  for (let i = quaiList.length - 1; i >= 0; i--) {
+    const quai = quaiList[i];
+
+    // Quái đang bẹp: đếm lùi rồi biến mất
+    if (quai.bep > 0) {
+      quai.bep--;
+      if (quai.bep === 0) quaiList.splice(i, 1);
+      continue;
+    }
+
+    quai.vx = quai.huong * TOC_DO_QUAI;
+    quai.vy = Math.min(quai.vy + TRONG_LUC, TOC_DO_ROI_TOI_DA);
+    diChuyenVaVaCham(quai);   // dùng lại đúng hàm của capybara!
+
+    // Đụng tường thì quay đầu
+    if (quai.chamTuong) quai.huong = -quai.huong;
+    // Sắp bước hụt mép bục thì cũng quay đầu
+    if (quai.dangDungDat) {
+      const xPhiaTruoc = quai.huong > 0 ? quai.x + quai.w : quai.x - 1;
+      const cotTruoc = Math.floor(xPhiaTruoc / O);
+      const hangDuoiChan = Math.floor((quai.y + quai.h + 1) / O);
+      if (!laO(cotTruoc, hangDuoiChan)) quai.huong = -quai.huong;
+    }
+
+    // Capybara chạm quái
+    if (chongNhau(capy, quai)) {
+      const chanCapy = capy.y + capy.h;
+      const giuaQuai = quai.y + quai.h / 2;
+      if (capy.vy > 0 && chanCapy < giuaQuai + 2) {
+        // Rơi từ trên xuống trúng đầu: đạp bẹp quái
+        quai.bep = 20;
+        capy.vy = -3.5;               // nảy lên một chút
+        diem += 2;
+      } else {
+        trangThai = "thua";           // chạm ngang: thua
+      }
+    }
+  }
+
+  // ---- [BƯỚC 5] Rơi xuống hố ----
+  if (capy.y > SO_HANG * O + 20) trangThai = "thua";
+
+  // ---- [BƯỚC 4] Chạm cột cờ ----
+  const xCot = cotCo * O + 7;
+  if (capy.x + capy.w > xCot && capy.x < xCot + 2) trangThai = "thang";
+
+  // ---- [BƯỚC 4] Camera đi theo capybara ----
+  // Thế giới đứng yên, chỉ có khung nhìn dời đi.
+  cameraX = capy.x - 120;
+  cameraX = Math.max(0, Math.min(cameraX, SO_COT * O - RONG));
+}
+
+
+// =====================================================================
+// VẼ — chạy sau mỗi lần cập nhật
+// =====================================================================
+function ve() {
+  const cam = Math.round(cameraX);
+
+  // [BƯỚC 1] Bầu trời
+  ctx.fillStyle = "#7ec8f2";
+  ctx.fillRect(0, 0, RONG, CAO);
+
+  // [BƯỚC 4] Mây trôi chậm hơn mặt đất (cam * 0.5) nên trông như ở xa
+  for (let i = 0; i < 12; i++) {
+    const xMay = i * 160 + 30 - cam * 0.5;
+    const yMay = 12 + (i % 3) * 14;
+    if (xMay > -30 && xMay < RONG) vePixel(DAU.may, xMay, yMay, false);
+  }
+
+  // [BƯỚC 3] Các ô đất / khối — chỉ vẽ những cột đang nằm trong khung nhìn
+  const cotDau = Math.floor(cam / O);
+  const cotCuoi = cotDau + Math.ceil(RONG / O) + 1;
+  for (let hang = 0; hang < SO_HANG; hang++) {
+    for (let cot = cotDau; cot <= cotCuoi && cot < SO_COT; cot++) {
+      const kyTu = oMan[hang][cot];
+      const x = cot * O - cam;
+      const y = hang * O;
+      if (kyTu === "#") {
+        // Nếu ô phía trên cũng là đất thì không vẽ cỏ
+        const trenLaDat = hang > 0 && oMan[hang - 1][cot] === "#";
+        vePixel(trenLaDat ? DAU.dat : DAU.datCo, x, y, false);
+      } else if (kyTu === "B") {
+        vePixel(DAU.khoiXu, x, y, false);
+      } else if (kyTu === "b") {
+        vePixel(DAU.khoiRong, x, y, false);
+      }
+    }
+  }
+
+  // [BƯỚC 4] Cột cờ và lá cờ
+  const xCot = cotCo * O + 7 - cam;
+  ctx.fillStyle = "#e0e0e0";
+  ctx.fillRect(xCot, hangCo * O, 2, (9 - hangCo) * O);
+  ctx.fillStyle = "#ffd23f";
+  ctx.fillRect(xCot - 1, hangCo * O - 3, 4, 4);   // núm tròn trên đỉnh
+  vePixel(DAU.co, xCot - 12, hangCo * O + 2, false);
+
+  // [BƯỚC 4] Xu
+  for (const xu of xuList) vePixel(DAU.xu, xu.x - cam, xu.y, false);
+  for (const xu of xuBay) vePixel(DAU.xu, xu.x - cam, xu.y, false);
+
+  // [BƯỚC 5] Quái
+  for (const quai of quaiList) {
+    let hinh;
+    if (quai.bep > 0) hinh = DAU.slimeBep;
+    else hinh = Math.floor(demKhungHinh / 15) % 2 === 0 ? DAU.slime1 : DAU.slime2;
+    // Hình 14x10, hộp va chạm 14x9: vẽ lệch lên 1 điểm cho chân chạm đất
+    vePixel(hinh, quai.x - cam, quai.y - 1, quai.huong > 0);
+  }
+
+  // [BƯỚC 1-3] Capybara: chọn hình theo việc đang làm
+  let hinhCapy;
+  let nhunNhay = 0;
+  if (trangThai === "thua") {
+    hinhCapy = DAU.capyThua;
+  } else if (trangThai === "thang") {
+    hinhCapy = DAU.capyNhay;
+    nhunNhay = -Math.abs(Math.sin(demKhungHinh / 8)) * 6;   // nhảy mừng tại chỗ
+  } else if (!capy.dangDungDat) {
+    hinhCapy = DAU.capyNhay;
+  } else if (capy.buocChan > 0 && Math.floor(capy.buocChan / 8) % 2 === 1) {
+    hinhCapy = DAU.capyChay;
+  } else {
+    hinhCapy = DAU.capyDung;
+  }
+  // Hình 16x12, hộp va chạm 12x11: vẽ lệch 2 điểm sang trái, 1 điểm lên trên
+  vePixel(hinhCapy, capy.x - 2 - cam, capy.y - 1 + nhunNhay, capy.huong < 0);
+
+  // [BƯỚC 4] Điểm ở góc trên trái (không cuộn theo camera)
+  vePixel(DAU.xu, 6, 6, false);
+  vietChu("x " + diem, 17, 13, "left", 8);
+
+  // [BƯỚC 5] Thông báo thắng / thua
+  if (trangThai !== "choi") {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(0, 60, RONG, 56);
+    if (trangThai === "thang") {
+      vietChu("Thắng! Điểm: " + diem, RONG / 2, 84, "center", 14);
+    } else {
+      vietChu("Ối! Capybara ngã rồi", RONG / 2, 84, "center", 14);
+    }
+    vietChu("Bấm Enter để chơi lại", RONG / 2, 104, "center", 8);
+  }
+}
+
+// Viết chữ trắng có viền đen cho dễ đọc
+function vietChu(noiDung, x, y, canLe, coChu) {
+  ctx.font = "bold " + coChu + "px monospace";
+  ctx.textAlign = canLe;
+  ctx.lineWidth = coChu > 10 ? 3 : 2;
+  ctx.strokeStyle = "#000";
+  ctx.strokeText(noiDung, x, y);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(noiDung, x, y);
+}
+
+
+// =====================================================================
+// [BƯỚC 2] VÒNG LẶP GAME — như cuốn sách lật hình
+// =====================================================================
+// Trình duyệt gọi vongLap mỗi khi sẵn sàng vẽ khung hình mới
+// (60 lần/giây trên màn thường, 120 lần/giây trên màn ProMotion).
+// Để game chạy cùng tốc độ trên mọi màn hình, ta cộng dồn thời gian
+// và chỉ gọi capNhat() đúng mỗi 1/60 giây một lần.
+const BUOC = 1000 / 60;     // 1 bước = 16.67 mili giây
+let tichLuy = 0;
+let lanTruoc = performance.now();
+
+function vongLap(bayGio) {
+  // Giới hạn 250ms để khi chuyển tab rồi quay lại, game không "tua nhanh"
+  tichLuy += Math.min(bayGio - lanTruoc, 250);
+  lanTruoc = bayGio;
+  while (tichLuy >= BUOC) {
+    capNhat();
+    tichLuy -= BUOC;
+  }
+  ve();
+  requestAnimationFrame(vongLap);   // hẹn vẽ khung hình tiếp theo
+}
+
+// Bắt đầu!
+napMan();
+requestAnimationFrame(vongLap);
+</script>
+</body>
+</html>
