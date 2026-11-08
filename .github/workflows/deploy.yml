@@ -1,0 +1,56 @@
+name: Deploy
+
+# Tự động đưa game lên Cloudflare Workers sau khi workflow "CI" (kiểm thử) chạy xong và thành công trên main.
+# Cũng có thể bấm chạy tay trong tab Actions.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Không để hai lần deploy chạy chồng nhau
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy lên Cloudflare
+    # Chỉ deploy khi kiểm thử đã qua (hoặc khi bấm chạy tay)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deploy đúng phiên bản code đã được kiểm thử
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Kiểm tra đã cấu hình khóa Cloudflare
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Thiếu secret CLOUDFLARE_API_TOKEN hoặc CLOUDFLARE_ACCOUNT_ID. Xem hướng dẫn trong docs/ci-cd-cloudflare.md"
+            exit 1
+          fi
+
+      - name: Tạo database D1 nếu chưa có
+        run: node scripts/ensure-d1.mjs
+
+      - name: Cập nhật cấu trúc bảng D1 (migrations)
+        run: npx wrangler d1 migrations apply DB --remote
+
+      - name: Deploy Worker
+        run: npx wrangler deploy

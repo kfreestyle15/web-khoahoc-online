@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "capybara-platformer",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  // Game (file tĩnh) nằm trong thư mục public/. Chỉ các đường dẫn /api/* chạy qua Worker.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  // Cơ sở dữ liệu D1. Không ghi database_id ở đây: khi deploy, scripts/ensure-d1.mjs
+  // tìm hoặc tạo database "capybara-scores" rồi điền ID vào bản chạy trên CI.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "capybara-scores",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
